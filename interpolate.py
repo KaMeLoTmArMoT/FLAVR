@@ -17,6 +17,7 @@ import torch.nn.functional as F
 
 import argparse
 
+os.chdir("/FLAVR")
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--input_video" , type=str , required=True , help="Path/WebURL to input video")
@@ -40,7 +41,7 @@ from os import path
 if not args.is_folder and not path.exists(input_video):
     print("Invalid input file path!")
     exit()
-    
+
 if args.is_folder and not path.exists(input_video):
     print("Invalid input directory path!")
     exit()
@@ -67,10 +68,11 @@ if input_video.startswith("http"):
     cmd = f"{youtube_dl_path} -i -o video.mp4 {input_video}"
     os.system(cmd)
     input_video = "video.mp4"
-    output_video = "video" + str(args.output_ext) 
+    output_video = "video" + str(args.output_ext)
 
 def loadModel(model, checkpoint):
-    
+
+    print(111111111111, checkpoint)
     saved_state_dict = torch.load(checkpoint)['state_dict']
     saved_state_dict = {k.partition("module.")[-1]:v for k,v in saved_state_dict.items()}
     model.load_state_dict(saved_state_dict)
@@ -99,37 +101,41 @@ def make_image(img):
 def files_to_videoTensor(path , downscale=1.):
     from PIL import Image
     files = sorted(os.listdir(path))
-    print(len(files))
+    print("files", len(files))
     images = [torch.Tensor(np.asarray(Image.open(os.path.join(input_video , f)))).type(torch.uint8) for f in files]
-    print(images[0].shape)
+    print("shape", images[0].shape)
     videoTensor = torch.stack(images)
     return videoTensor
 
 def video_to_tensor(video):
 
     videoTensor , _ , md = read_video(video)
+    print(f"tensor size {videoTensor.element_size()} {videoTensor.nelement() / (1024 * 1024):.0f}")
     fps = md["video_fps"]
-    print(fps)
+    print("fps", fps)
     return videoTensor
 
 def video_transform(videoTensor , downscale=1):
-    
+
     T , H , W = videoTensor.size(0), videoTensor.size(1) , videoTensor.size(2)
     downscale = int(downscale * 8)
     resizes = 8*(H//downscale) , 8*(W//downscale)
     transforms = torchvision.transforms.Compose([ToTensorVideo() , Resize(resizes)])
     videoTensor = transforms(videoTensor)
-    
+
     # resizes = 720,1280
     print("Resizing to %dx%d"%(resizes[0] , resizes[1]) )
     return videoTensor , resizes
 
 if args.is_folder:
+    print("Use folder")
     videoTensor = files_to_videoTensor(input_video , args.downscale)
 else:
+    print("Use other")
     videoTensor = video_to_tensor(input_video)
 
 idxs = torch.Tensor(range(len(videoTensor))).type(torch.long).view(1,-1).unfold(1,size=nbr_frame,step=1).squeeze(0)
+print("idxs.size", idxs.size())
 videoTensor , resizes = video_transform(videoTensor , args.downscale)
 print("Video tensor shape is , " , videoTensor.shape)
 
@@ -140,17 +146,21 @@ width = n_outputs + 1
 outputs = [] ## store the input and interpolated frames
 
 outputs.append(frames[idxs[0][1]])
+print("outputs len", len(outputs))
+print("outputs", outputs)
 
 model = model.eval()
 
 for i in tqdm.tqdm(range(len(idxs))):
     idxSet = idxs[i]
     inputs = [frames[idx_].cuda().unsqueeze(0) for idx_ in idxSet]
+    print("inputs", len(inputs), "set", idxSet)
     with torch.no_grad():
-        outputFrame = model(inputs)   
+        outputFrame = model(inputs)
     outputFrame = [of.squeeze(0).cpu().data for of in outputFrame]
     outputs.extend(outputFrame)
     outputs.append(inputs[2].squeeze(0).cpu().data)
+    print("loop len", len(outputs))
 
 new_video = [make_image(im_) for im_ in outputs]
 
